@@ -172,7 +172,7 @@ vpath %.o $(BUILD_DIR)
 
 .DEFAULT_GOAL: all
 
-.PHONY: all build-info prepare-build lib image install program clean
+.PHONY: all build-info prepare-build lib image install elfsize hexsize program clean
 
 ifeq ($(BUILD_TYPE), lib)
 all: build-info prepare-build lib
@@ -215,16 +215,36 @@ prepare-build:
 
 lib: $(BUILD_DIR)/$(LIBNAME)
 
+image: hex eep lss sym elfsize hexsize
+	
+hex: $(BUILD_DIR)/$(TARGET).hex
+$(BUILD_DIR)/$(TARGET).hex: $(BUILD_DIR)/$(TARGET).elf
+	$(OBJCOPY) -O $(BIN_FORMAT) -R .eeprom -R .fuse -R .lock -R .signature $< $@
+
+eep: $(BUILD_DIR)/$(TARGET).eep
+$(BUILD_DIR)/$(TARGET).eep: $(BUILD_DIR)/$(TARGET).elf
+	-$(OBJCOPY) -j .eeprom --set-section-flags=.eeprom="alloc,load" \
+	--change-section-lma .eeprom=0 --no-change-warnings -O $(BIN_FORMAT) $< $@ || exit 0
+
+lss: $(BUILD_DIR)/$(TARGET).lss
+$(BUILD_DIR)/$(TARGET).lss: $(BUILD_DIR)/$(TARGET).elf
+	$(OBJDUMP) -h -S -z $< > $@
+
+sym: $(BUILD_DIR)/$(TARGET).sym
+$(BUILD_DIR)/$(TARGET).sym: $(BUILD_DIR)/$(TARGET).elf
+	$(NM) -n $< > $@
+
+elf: $(BUILD_DIR)/$(TARGET).elf
+$(BUILD_DIR)/$(TARGET).elf: $(OBJ) $(LIB_FILE_NAMES)
+	$(CC) $(CFLAGS) $(GENDEPFLAGS) $^ --output $@ $(LDFLAGS)
+
+$(LIB_FILE_NAMES):
+	
 $(BUILD_DIR)/$(LIBNAME): $(OBJ)
 	$(AR) $@ $(OBJ)
 	
 $(BUILD_DIR)/%.o : %.c
 	$(CC) -c $(CFLAGS) $(GENDEPFLAGS) $< -o $@ 
-
-image:
-	@echo
-	@echo "+++ build image +++"
-	@echo
 
 install: all
 	@echo
@@ -236,6 +256,14 @@ ifeq ($(BUILD_TYPE), lib)
 else
 	$(error install only supported for lib build type)
 endif
+
+elfsize:
+	@if test -f  $(BUILD_DIR)/$(TARGET).elf; then echo "elf size:"; echo; $(ELFSIZE); \
+	2>/dev/null; fi
+
+hexsize:
+	@if test -f  $(BUILD_DIR)/$(TARGET).hex; then echo "hex size: "; echo; $(HEXSIZE); \
+	2>/dev/null; fi
 
 program: all
 	@echo
