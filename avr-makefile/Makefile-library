@@ -1,0 +1,258 @@
+#
+#        AVR Makefile
+#
+#        written by Dieter Scholz
+#
+
+########### general configuration properties ##########################################################################
+
+# target name
+TARGET                  = $(lastword $(subst /, ,$(CURDIR)))
+
+# search path for external header and library dependencies
+EXT_PATH                = ../install
+EXT_INCL_PATH           = $(EXT_PATH)/includes
+EXT_LIB_PATH            = $(EXT_PATH)/lib
+EXT_LIB_DEPENDENCIES    =
+
+# MCU type
+MCU                     = atmega168
+
+# MCU frequency
+FREQ                    = 8000000
+
+# BAUD rate for UART communication
+BAUD                    = 2400
+
+# build type (one of 'image' or 'lib')
+BUILD_TYPE              = lib
+# build profile (determines output files location - one of 'debug' or 'release')
+BUILD_PROFILE          ?= debug
+
+# extra C definitions
+EXTRA_CDEFS             =
+
+# avrdude programmer parameters
+AVRDUDE_PROGRAMMER      = avrisp
+AVRDUDE_OPTIONS         = -pm168 -Pcom5 -b19200
+
+# format of the binary
+BIN_FORMAT              = ihex
+
+# debug_type (one of 'dwarf-2' or 'stabs')
+DEBUG_TYPE              = dwarf-2
+
+########### build configuration properties ############################################################################
+
+ifeq ($(BUILD_TYPE),lib)
+	LIBNAME = $(TARGET).a
+endif
+
+SRC_DIR                 = src
+SRC                     = $(wildcard $(SRC_DIR)/*.c)
+
+INCL_DIR                = includes
+
+BUILD_ROOT_DIR          = build
+BUILD_DIR               = $(BUILD_ROOT_DIR)/$(BUILD_PROFILE)
+
+OBJ                     = $(subst $(SRC_DIR),$(BUILD_DIR),$(subst .c,.o,$(strip $(SRC))))
+
+LIB_FILE_NAMES          = $(EXT_LIB_DEPENDENCIES:-l%=$(EXT_LIB_PATH)/lib%.a)
+
+LST_FILE                = $(BUILD_DIR)/$(TARGET).lst
+
+########### C settings ################################################################################################
+
+# C standard
+C_STANDARD              = gnu99
+
+# optimization level
+OPT_LVL                 = s
+
+# C definitions
+CDEFS                   = -DF_CPU=$(FREQ)UL -DBAUD=$(BAUD) $(EXTRA_CDEFS)
+
+# C flags
+CFLAGS                  = $(strip $(CDEFS))
+CFLAGS                 += -mmcu=$(MCU)
+CFLAGS                 += -O$(OPT_LVL)
+CFLAGS                 += -std=$(C_STANDARD)
+# define char as unsigned
+CFLAGS                 += -funsigned-char
+# define bitfield as unsigned
+CFLAGS                 += -funsigned-bitfields
+# struct without holes
+CFLAGS                 += -fpack-struct
+# only use the bits needed for enums
+CFLAGS                 += -fshort-enums
+# enable all warnings
+CFLAGS                 += -Wall
+# be strict about prototypes
+CFLAGS                 += -Wstrict-prototypes
+# add project include directory
+CFLAGS                 += -I$(INCL_DIR)
+# add external include directory
+CFLAGS                 += $(patsubst %,-I%,$(EXT_INCL_PATH))
+
+# debug options (create assembler listing and choose debug variant)
+ifeq ($(BUILD_PROFILE),debug)
+	CFLAGS             += -Wa,-adhlns=$(LST_FILE)
+	CFLAGS             += -g$(DEBUG_TYPE)
+endif
+
+# flags for dependency generation
+GENDEPFLAGS             = -MMD -MP -MF .dep/$(@F).d
+
+########### LD linker settings ########################################################################################
+
+# choose fprintf library variant
+PRINTF_LIB_MIN          = -Wl,-u,vfprintf -lprintf_min
+PRINTF_LIB_FLOAT        = -Wl,-u,vfprintf -lprintf_flt
+
+# choose fscanf library variant
+SCANF_LIB_MIN           = -Wl,-u,vfscanf -lscanf_min
+SCANF_LIB_FLOAT         = -Wl,-u,vfscanf -lscanf_flt
+
+# link math library (required by float variants)
+MATH_LIB                = -lm
+
+# build LDFLAGS variable
+# add library path
+LDFLAGS                 = $(patsubst %,-L%,$(EXT_LIB_PATH))
+# use system libs
+LDFLAGS                += $(strip $(PRINTF_LIB_MIN) $(SCANF_LIB_MIN))
+
+ifeq ($(BUILD_PROFILE),debug)
+    # create map file
+    LDFLAGS            += -Wl,-Map=$(BUILD_DIR)/$(TARGET).map,--cref
+endif
+
+# add libraries
+LDFLAGS                += $(strip $(EXT_LIB_DEPENDENCIES))
+
+########### avrdude options ###########################################################################################
+
+AVRDUDE_WRITE_FLASH     = -U flash:w:$(TARGET).hex
+#AVRDUDE_WRITE_EEPROM   = -U eeprom:w:$(TARGET).eep
+AVRDUDE_WRITE_EEPROM   =
+#AVRDUDE_NO_VERIFY      = -V
+AVRDUDE_NO_VERIFY       =
+#AVRDUDE_ERASE_COUNTER  = -y
+AVRDUDE_ERASE_COUNTER   =
+#AVRDUDE_VERBOSE        = -v
+AVRDUDE_VERBOSE         = -v
+
+AVRDUDE_FLAGS           = -p $(MCU) -c $(AVRDUDE_PROGRAMMER) $(strip $(AVRDUDE_OPTIONS))
+AVRDUDE_FLAGS          += $(AVRDUDE_NO_VERIFY)
+AVRDUDE_FLAGS          += $(AVRDUDE_ERASE_COUNTER)
+AVRDUDE_FLAGS          += $(AVRDUDE_VERBOSE)
+
+
+########### programs ##################################################################################################
+
+AR                      = avr-ar rcs
+AVRDUDE                 = avrdude
+CC                      = avr-gcc
+CP                      = cp -r
+MKDIR                   = mkdir -p
+NM                      = avr-nm
+OBJCOPY                 = avr-objcopy
+OBJDUMP                 = avr-objdump
+RMDIR                   = rm -fr
+SIZE                    = avr-size
+
+ELFSIZE                 = $(SIZE) --mcu=$(MCU) --format=avr $(BUILD_DIR)/$(TARGET).elf
+HEXSIZE                 = $(SIZE) --target=$(BIN_FORMAT) $(BUILD_DIR)/$(TARGET).hex
+
+########### rules #####################################################################################################
+
+vpath %.c $(SRC_DIR)
+vpath %.o $(BUILD_DIR)
+
+.DEFAULT_GOAL: all
+
+.PHONY: all build-info prepare-build lib image install program clean
+
+ifeq ($(BUILD_TYPE), lib)
+all: build-info prepare-build lib
+else ifeq ($(BUILD_TYPE), image)
+all: build-info prepare-build image
+else
+all:
+	$(error no valid build type - use either img or lib)
+endif
+
+build-info:
+	@echo
+	@echo "+++ build information +++"
+	@echo
+	@echo "   compiler info     -> $(shell $(CC) --version)"
+	@echo "   build type        -> $(BUILD_TYPE)"
+	@echo "   build profile     -> $(BUILD_PROFILE)"
+	@echo "   mcu settings      -> $(MCU) / $(FREQ) / $(BAUD)"
+	@echo "   target name       -> $(TARGET)"
+ifeq ($(BUILD_TYPE),lib)
+	@echo "   library name      -> $(LIBNAME)"
+endif
+	@echo "   source directory  -> $(SRC_DIR)"
+	@echo "   source files      -> $(SRC)"
+	@echo "   include directory -> $(INCL_DIR)"
+	@echo "   build directory   -> $(BUILD_DIR)"
+	@echo "   object files      -> $(OBJ)"
+	@echo "   libraries         -> $(EXT_LIB_DEPENDENCIES)"
+	@echo "   library filenames -> $(LIB_FILE_NAMES)"
+	@echo "   binary format     -> $(BIN_FORMAT)"
+	@echo "   CFLAGS            -> $(CFLAGS)"
+	@echo "   LDFLAGS           -> $(LDFLAGS)"
+	@echo "   AVRDUDE_FLAGS     -> $(AVRDUDE_FLAGS)"
+
+prepare-build:
+	@echo
+	@echo "+++ building $(BUILD_TYPE) +++"
+	@echo
+	if [ ! -d $(BUILD_DIR) ]; then $(MKDIR) $(BUILD_DIR); fi
+
+lib: $(BUILD_DIR)/$(LIBNAME)
+
+$(BUILD_DIR)/$(LIBNAME): $(OBJ)
+	$(AR) $@ $(OBJ)
+	
+$(BUILD_DIR)/%.o : %.c
+	$(CC) -c $(CFLAGS) $(GENDEPFLAGS) $< -o $@ 
+
+image:
+	@echo
+	@echo "+++ build image +++"
+	@echo
+
+install: all
+	@echo
+	@echo "+++ library +++"
+	@echo
+ifeq ($(BUILD_TYPE), lib)
+	$(CP) $(INCL_DIR)/*.h $(EXT_INCL_PATH)
+	$(CP) $(BUILD_DIR)/*.a $(EXT_LIB_PATH)
+else
+	$(error install only supported for lib build type)
+endif
+
+program: all
+	@echo
+	@echo "+++ transfer program to device +++"
+	@echo
+ifeq ($(BUILD_TYPE), image)
+	$(AVRDUDE) $(AVRDUDE_FLAGS) $(AVRDUDE_WRITE_FLASH) $(AVRDUDE_WRITE_EEPROM)
+else
+	$(error program not supported for this build type)
+endif
+
+clean:
+	@echo
+	@echo "+++ clean up project +++"
+	@echo
+	if [ -d $(BUILD_ROOT_DIR) ]; then $(RMDIR) $(BUILD_ROOT_DIR); fi
+	if [ -d .dep ]; then $(RMDIR) .dep; fi
+	@echo
+
+-include $(shell $(MKDIR) .dep) $(wildcard .dep/*)	
