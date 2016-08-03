@@ -214,7 +214,10 @@ prepare-build:
 	if [ ! -d $(BUILD_DIR) ]; then $(MKDIR) $(BUILD_DIR); fi
 
 lib: $(BUILD_DIR)/$(LIBNAME)
-
+	
+$(BUILD_DIR)/$(LIBNAME): $(OBJ)
+	if [ ! -z $(OBJ) ]; then $(AR) $@ $(OBJ); fi
+	
 image: hex eep lss sym elfsize hexsize
 	
 hex: $(BUILD_DIR)/$(TARGET).hex
@@ -240,9 +243,6 @@ $(BUILD_DIR)/$(TARGET).elf: $(OBJ) $(LIB_FILE_NAMES)
 
 $(LIB_FILE_NAMES):
 	
-$(BUILD_DIR)/$(LIBNAME): $(OBJ)
-	$(AR) $@ $(OBJ)
-	
 $(BUILD_DIR)/%.o : %.c
 	$(CC) -c $(CFLAGS) $(GENDEPFLAGS) $< -o $@ 
 
@@ -251,8 +251,8 @@ install: all
 	@echo "+++ library +++"
 	@echo
 ifeq ($(BUILD_TYPE), lib)
-	$(CP) $(INCL_DIR)/*.h $(EXT_INCL_PATH)
-	$(CP) $(BUILD_DIR)/*.a $(EXT_LIB_PATH)
+	-$(CP) $(INCL_DIR)/*.h $(EXT_INCL_PATH) || exit 0
+	-$(CP) $(BUILD_DIR)/*.a $(EXT_LIB_PATH) || exit 0
 else
 	$(error install only supported for lib build type)
 endif
